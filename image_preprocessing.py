@@ -32,6 +32,6 @@ def load_image(img, image_size, do_prewhiten=True):
         _image = to_rgb(_image)
     if do_prewhiten:
         _image = prewhiten(_image)
-    crop(_image, image_size)
+    _image = crop(_image, image_size)
     image[0, :, :, :] = _image
     return image
