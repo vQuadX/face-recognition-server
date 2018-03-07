@@ -1,15 +1,13 @@
-import os
-
 from flask import Flask
 from flask_restful import Resource, Api, reqparse
 from werkzeug.datastructures import FileStorage
 
 from image_preprocessing import load_image
 from model.inception_resnet_v1 import InceptionResNetV1
-
-BASE_PATH = os.path.dirname(__file__)
+from settings import MODEL_WEIGHTS_PATH, DEBUG
 
 app = Flask(__name__)
+app.debug = DEBUG
 api = Api(app)
 model = None
 
@@ -32,6 +30,6 @@ api.add_resource(RecognizeFace, '/recognize-face')
 if __name__ == '__main__':
     print('Loading Face Recognition model...')
     model = InceptionResNetV1()
-    model.load_weights(os.path.join(BASE_PATH, os.environ.get('MODEL_WEIGHTS_PATH')))
+    model.load_weights(MODEL_WEIGHTS_PATH)
     print('Face Recognition model is loaded')
     app.run(use_reloader=False)
