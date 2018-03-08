@@ -1,3 +1,4 @@
+import numpy as np
 from flask import Flask
 from flask_restful import Resource, Api, reqparse
 from scipy.misc import imread
@@ -50,8 +51,30 @@ class FindFaces(Resource):
         }
 
 
+class RecognizeFaces(Resource):
+    def post(self):
+        global face_extractor
+        parse = reqparse.RequestParser()
+        parse.add_argument('image', type=FileStorage, location='files')
+        args = parse.parse_args()
+        _image = args['image']
+        image = imread(_image, mode='RGB')
+        faces = face_extractor.extract_faces(image, image_size=160)
+        input_tensor = np.array([face[0] for face in faces])
+        predictions = model.predict(input_tensor)
+        return {
+            'image': _image.filename,
+            'found_faces': len(faces),
+            'faces': [{
+                'area': face[1],
+                'embeddings': prediction
+            } for face, prediction in zip(faces, predictions)],
+        }
+
+
 api.add_resource(FindFaces, '/find-faces')
 api.add_resource(RecognizeFace, '/recognize-face')
+api.add_resource(RecognizeFaces, '/recognize-faces')
 
 if __name__ == '__main__':
     app.config.from_object(Config)
