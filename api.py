@@ -1,5 +1,6 @@
 from flask import Flask
 from flask_restful import Resource, Api, reqparse
+from scipy.misc import imread
 from werkzeug.datastructures import FileStorage
 
 from face import FaceExtractor
@@ -33,6 +34,23 @@ class RecognizeFace(Resource):
         }
 
 
+class FindFaces(Resource):
+    def post(self):
+        global face_extractor
+        parse = reqparse.RequestParser()
+        parse.add_argument('image', type=FileStorage, location='files')
+        args = parse.parse_args()
+        _image = args['image']
+        image = imread(_image, mode='RGB')
+        faces = face_extractor.find_faces(image)
+        return {
+            'image': _image.filename,
+            'found_faces': len(faces),
+            'faces': faces
+        }
+
+
+api.add_resource(FindFaces, '/find-faces')
 api.add_resource(RecognizeFace, '/recognize-face')
 
 if __name__ == '__main__':
