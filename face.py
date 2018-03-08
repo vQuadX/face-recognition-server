@@ -1,8 +1,9 @@
-from typing import Union
+from typing import Union, List, Tuple
 
 import cv2
 import numpy as np
 from numpy import ndarray as array
+from scipy.misc import imread, imresize
 
 from image_preprocessing import reverse_channels
 from settings import HAARCASCADE_PATH
@@ -25,3 +26,26 @@ class FaceExtractor:
 
         faces = self.cascade_classifier.detectMultiScale(image, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
         return faces
+
+    def extract_faces(self, image: Union[str, np.ndarray], image_size: int = None) -> List[Tuple[array, array]]:
+        """Find and extract all faces in image.
+
+        :param image: image path or RGB image as numpy array
+        :param image_size: size of output face images
+        :return: list of (RGB face array, face area array (x, y, width, height)) tuple
+        """
+        if isinstance(image, str):
+            image = imread(image, mode='RGB')
+        faces = self.find_faces(image)
+
+        face_images = []
+        for area in faces:
+            x, y, w, h = area
+            face_image = image[y: y + h, x: x + w, :]
+            width, height = face_image.shape[:2]
+            if image_size and (height != image_size or width != image_size):
+                scaling_factor = image_size / min(width, height)
+                face_image = imresize(face_image, size=(round(width * scaling_factor), round(height * scaling_factor)))
+            face_images.append((face_image, area))
+
+        return face_images
