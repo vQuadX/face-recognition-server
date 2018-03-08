@@ -35,3 +35,8 @@ def load_image(img, image_size, do_prewhiten=True):
     _image = crop(_image, image_size)
     image[0, :, :, :] = _image
     return image
+
+
+def reverse_channels(img):
+    return img[:, :, ::-1]
+
