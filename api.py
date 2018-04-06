@@ -1,5 +1,5 @@
 import numpy as np
-from flask import Flask
+from flask import Flask, request
 from flask_restful import Resource, Api, reqparse
 from scipy.misc import imread
 from scipy.spatial import distance
@@ -73,6 +73,15 @@ class RecognizeFaces(Resource):
         }
 
 
+class CompareEmbeddings(Resource):
+    def post(self):
+        face_embeddings = request.get_json()
+        _distance = distance.euclidean(*face_embeddings)
+        return {
+            'distance': _distance,
+        }
+
+
 class CompareFaces(Resource):
     def post(self):
         global face_extractor, model
@@ -136,6 +145,7 @@ class CompareFaces(Resource):
 
 
 api.add_resource(FindFaces, '/find-faces')
+api.add_resource(CompareEmbeddings, '/compare-embeddings')
 api.add_resource(CompareFaces, '/compare-faces')
 api.add_resource(RecognizeFace, '/recognize-face')
 api.add_resource(RecognizeFaces, '/recognize-faces')
