@@ -32,7 +32,7 @@ class RecognizeFace(Resource):
         image = load_image(_image, 160)
         return {
             'image': _image.filename,
-            'embeddings': model.predict(image)[0]
+            'embeddings': model.predict(prewhiten(image))[0]
         }
 
 
@@ -61,7 +61,7 @@ class RecognizeFaces(Resource):
         _image = args['image']
         image = imread(_image, mode='RGB')
         faces = face_extractor.extract_faces(image, image_size=160)
-        input_tensor = np.array([face[0] for face in faces])
+        input_tensor = np.array([prewhiten(face[0]) for face in faces])
         predictions = model.predict(input_tensor)
         return {
             'image': _image.filename,
