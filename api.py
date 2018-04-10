@@ -60,7 +60,7 @@ class RecognizeFaces(Resource):
         args = parse.parse_args()
         _image = args['image']
         image = imread(_image, mode='RGB')
-        faces = face_extractor.extract_faces(image, image_size=160)
+        faces = face_extractor.extract_faces(image, image_size=160, margin=0.1)
         input_tensor = np.array([prewhiten(face[0]) for face in faces])
         predictions = model.predict(input_tensor)
         return {
