@@ -1,6 +1,9 @@
 import numpy as np
 from flask import Flask, request
+from flask_jwt import JWT, jwt_required
 from flask_restful import Resource, Api, reqparse
+from flask_sockets import Sockets
+from passlib.hash import pbkdf2_sha256
 from scipy.misc import imread
 from scipy.spatial import distance
 from werkzeug.datastructures import FileStorage
@@ -8,9 +11,7 @@ from werkzeug.datastructures import FileStorage
 from classification import KNeighborsClassifier
 from face import FaceExtractor
 from image_preprocessing import load_image, prewhiten
-from model.inception_resnet_v1 import InceptionResNetV1
-from settings import DEBUG, MODEL_WEIGHTS_PATH
-from utils import NumpyEncoder
+from models.inception_resnet_v1 import InceptionResNetV1
 
 app = Flask(__name__)
 api = Api(app)
@@ -19,12 +20,29 @@ model = None
 face_extractor = None
 classifier = None
 
+User = namedtuple('User', 'id, username, password')
+with open('users.json', encoding='utf-8') as f:
+    users = [User(user['id'], user['username'], user['password']) for user in json.load(f)]
 
-class Config:
-    RESTFUL_JSON = {'cls': NumpyEncoder}
+username_table = {u.username: u for u in users}
+userid_table = {u.id: u for u in users}
+
+
+def authenticate(username, password):
+    user = username_table.get(username)
+    if user and pbkdf2_sha256.verify(user.password, password):
+        return user
+
+
+def identify(payload):
+    return userid_table.get(payload['identity'])
+
+
+jwt = JWT(app, authenticate, identify)
 
 
 class RecognizeFace(Resource):
+    @jwt_required()
     def post(self):
         global model
         parse = reqparse.RequestParser()
@@ -39,6 +57,7 @@ class RecognizeFace(Resource):
 
 
 class FindFaces(Resource):
+    @jwt_required()
     def post(self):
         global face_extractor
         parse = reqparse.RequestParser()
@@ -55,6 +74,7 @@ class FindFaces(Resource):
 
 
 class RecognizeFaces(Resource):
+    @jwt_required()
     def post(self):
         global face_extractor
         parse = reqparse.RequestParser()
@@ -76,6 +96,7 @@ class RecognizeFaces(Resource):
 
 
 class CompareEmbeddings(Resource):
+    @jwt_required()
     def post(self):
         face_embeddings = request.get_json()
         _distance = distance.euclidean(*face_embeddings)
@@ -85,6 +106,7 @@ class CompareEmbeddings(Resource):
 
 
 class CompareFaces(Resource):
+    @jwt_required()
     def post(self):
         global face_extractor, model
         parse = reqparse.RequestParser()
