@@ -5,6 +5,7 @@ from scipy.misc import imread
 from scipy.spatial import distance
 from werkzeug.datastructures import FileStorage
 
+from classification import KNeighborsClassifier
 from face import FaceExtractor
 from image_preprocessing import load_image, prewhiten
 from model.inception_resnet_v1 import InceptionResNetV1
@@ -16,6 +17,7 @@ api = Api(app)
 app.debug = DEBUG
 model = None
 face_extractor = None
+classifier = None
 
 
 class Config:
@@ -151,11 +153,17 @@ api.add_resource(RecognizeFace, '/recognize-face')
 api.add_resource(RecognizeFaces, '/recognize-faces')
 
 if __name__ == '__main__':
-    app.config.from_object(Config)
-
-face_extractor = FaceExtractor()
-print('Loading Face Recognition model...')
-model = InceptionResNetV1()
-model.load_weights(MODEL_WEIGHTS_PATH)
-print('Face Recognition model is loaded')
-app.run(use_reloader=False)
+    app.config.from_pyfile('settings.py')
+    face_extractor = FaceExtractor()
+    print('Loading Face Recognition model...')
+    model = InceptionResNetV1()
+    model.load_weights(app.config['MODEL_WEIGHTS_PATH'])
+    print('Face Recognition model is loaded')
+    print('Loading Classifier model...')
+    classifier_path = app.config.get('CLASSIFIER_PATH')
+    if classifier_path:
+        classifier: KNeighborsClassifier = KNeighborsClassifier.from_file(classifier_path)
+    else:
+        classifier = KNeighborsClassifier()
+    print('Classifier model is loaded')
+    app.run(use_reloader=False, port=5001)
