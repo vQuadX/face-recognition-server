@@ -12,6 +12,7 @@ from classification import KNeighborsClassifier
 from face import FaceExtractor
 from image_preprocessing import load_image, prewhiten
 from models.inception_resnet_v1 import InceptionResNetV1
+from utils import serialize_area
 
 app = Flask(__name__)
 api = Api(app)
@@ -52,7 +53,7 @@ class RecognizeFace(Resource):
         image = load_image(_image, 160)
         return {
             'image': _image.filename,
-            'embeddings': model.predict(prewhiten(image))[0]
+            'embeddings': model.predict(image)[0]
         }
 
 
@@ -69,7 +70,7 @@ class FindFaces(Resource):
         return {
             'image': _image.filename,
             'found_faces': len(faces),
-            'faces': faces
+            'faces': [serialize_area(face_area) for face_area in faces]
         }
 
 
@@ -83,16 +84,21 @@ class RecognizeFaces(Resource):
         _image = args['image']
         image = imread(_image, mode='RGB')
         faces = face_extractor.extract_faces(image, image_size=160, margin=0.1)
-        input_tensor = np.array([prewhiten(face[0]) for face in faces])
-        predictions = model.predict(input_tensor)
-        return {
-            'image': _image.filename,
-            'found_faces': len(faces),
-            'faces': [{
-                'area': face[1],
-                'embeddings': prediction
-            } for face, prediction in zip(faces, predictions)],
-        }
+        if len(faces):
+            input_tensor = np.array([prewhiten(face[0]) for face in faces])
+            predictions = model.predict(input_tensor)
+            return {
+                'found_faces': len(faces),
+                'faces': [{
+                    'area': serialize_area(face_area),
+                    'embeddings': prediction
+                } for face_area, prediction in zip((face[1] for face in faces), predictions)],
+            }
+        else:
+            return {
+                'found_faces': 0,
+                'faces': []
+            }
 
 
 class CompareEmbeddings(Resource):
@@ -126,18 +132,14 @@ class CompareFaces(Resource):
         result = {
             'info': [
                 {
-                    'image': image1.filename,
                     'found_faces': len(image1_faces),
                     'faces': [{
-                        'area': face[1]
-                    } for face in image1_faces]
+                        'area': serialize_area(face_area)
+                    } for face_area in (face[1] for face in image1_faces)]
                 },
                 {
-                    'image': image2.filename,
                     'found_faces': len(image2_faces),
-                    'faces': [{
-                        'area': face[1]
-                    } for face in image2_faces]
+                    'faces': [serialize_area(face_area) for face_area in (face[1] for face in image2_faces)]
                 }
             ]
         }
@@ -155,7 +157,7 @@ class CompareFaces(Resource):
                 **result
             }
         face1_input_tensor = np.array([prewhiten(image1_faces[0][0])])
-        face1_embeddings = [model.predict(face1_input_tensor)[0]]
+        face1_embeddings = model.predict(face1_input_tensor)[0]
 
         face2_input_tensor = np.array([prewhiten(image2_faces[0][0])])
         face2_embeddings = model.predict(face2_input_tensor)[0]
