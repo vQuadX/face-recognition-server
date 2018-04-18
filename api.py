@@ -1,3 +1,6 @@
+import json
+from collections import namedtuple
+
 import numpy as np
 from flask import Flask, request
 from flask_jwt import JWT, jwt_required
@@ -170,6 +173,40 @@ class CompareFaces(Resource):
         }
 
 
+class IdentifyFaces(Resource):
+    @jwt_required()
+    def post(self):
+        parser = reqparse.RequestParser()
+        parser.add_argument('image', type=FileStorage, location='files')
+        args = parser.parse_args()
+
+        face_image = args['image']
+        faces = face_extractor.extract_faces(
+            imread(face_image, mode='RGB'),
+            image_size=160,
+            margin=0.1
+        )
+        if len(faces):
+            input_tensor = np.array([prewhiten(face[0]) for face in faces])
+            faces_embeddings = model.predict(input_tensor)
+            distances, identifiers = classifier.predict_on_batch(faces_embeddings)
+
+            return {
+                'found_faces': len(faces),
+                'persons': [{
+                    'area': serialize_area(face_area),
+                    'id': uuid.decode('utf-8') if dist <= 0.6 else None,
+                    'distance': float(dist)
+                } for face_area, dist, uuid in zip((face[1] for face in faces), distances, identifiers)],
+            }
+        else:
+            return {
+                'found_faces': 0,
+                'persons': []
+            }
+
+
+api.add_resource(IdentifyFaces, '/identify-faces')
 api.add_resource(FindFaces, '/find-faces')
 api.add_resource(CompareEmbeddings, '/compare-embeddings')
 api.add_resource(CompareFaces, '/compare-faces')
