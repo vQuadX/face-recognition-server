@@ -6,6 +6,7 @@ from flask import Flask, request
 from flask_jwt_simple import JWTManager, jwt_required, create_jwt
 from flask_restful import Resource, Api, reqparse
 from flask_sockets import Sockets
+from imageio import imsave
 from passlib.hash import pbkdf2_sha256
 from scipy.misc import imread
 from scipy.spatial import distance
@@ -212,6 +213,51 @@ class IdentifyFaces(Resource):
             }
 
 
+class AddPerson(Resource):
+    @jwt_required
+    def post(self):
+        parser = reqparse.RequestParser()
+        parser.add_argument('image', type=FileStorage, location='files')
+        args = parser.parse_args()
+
+        image = args.get('image')
+        image = imread(image, mode='RGB')
+        faces = face_extractor.extract_faces(
+            image,
+            image_size=160,
+            margin=0.1
+        )
+        if not len(faces):
+            return {
+                'error': 'Faces not found on image'
+            }
+        elif len(faces) > 1:
+            return {
+                'error': f'Found more than 1 face ({len(faces)})'
+            }
+
+        face_image = faces[0][0]
+        face_input_tensor = np.array([prewhiten(face_image)])
+        face_embeddings = model.predict(face_input_tensor)
+
+        person_id = str(uuid4())
+        class_id = classifier.partial_fit(face_embeddings, np.array([person_id]))[0]
+
+        person_images_dir = os.path.join(app.config.get('IMAGE_DIR'), person_id)
+        if not os.path.exists(person_images_dir):
+            os.makedirs(person_images_dir)
+
+        person_image = os.path.join(person_images_dir, f'{class_id}_original.jpg')
+        person_face_image = os.path.join(person_images_dir, f'{class_id}.jpg')
+        imsave(person_image, image)
+        imsave(person_face_image, face_image)
+
+        classifier.save('models/knn_classifier.pkl')
+        return {
+            'person_id': person_id
+        }
+
+
 api.add_resource(Auth, '/auth')
 api.add_resource(IdentifyFaces, '/identify-faces')
 api.add_resource(FindFaces, '/find-faces')
@@ -219,6 +265,7 @@ api.add_resource(CompareEmbeddings, '/compare-embeddings')
 api.add_resource(CompareFaces, '/compare-faces')
 api.add_resource(RecognizeFace, '/recognize-face')
 api.add_resource(RecognizeFaces, '/recognize-faces')
+api.add_resource(AddPerson, '/add-person')
 
 if __name__ == '__main__':
     app.config.from_pyfile('settings.py')
