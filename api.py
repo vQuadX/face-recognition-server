@@ -3,7 +3,7 @@ from collections import namedtuple
 
 import numpy as np
 from flask import Flask, request
-from flask_jwt import JWT, jwt_required
+from flask_jwt_simple import JWTManager, jwt_required, create_jwt
 from flask_restful import Resource, Api, reqparse
 from flask_sockets import Sockets
 from passlib.hash import pbkdf2_sha256
@@ -19,7 +19,8 @@ from utils import serialize_area
 
 app = Flask(__name__)
 api = Api(app)
-app.debug = DEBUG
+jwt = JWTManager(app)
+
 model = None
 face_extractor = None
 classifier = None
@@ -32,21 +33,29 @@ username_table = {u.username: u for u in users}
 userid_table = {u.id: u for u in users}
 
 
-def authenticate(username, password):
-    user = username_table.get(username)
-    if user and pbkdf2_sha256.verify(user.password, password):
-        return user
+class Auth(Resource):
+    def post(self):
+        if not request.is_json:
+            return {'msg': 'Missing JSON in request'}, 400
 
+        params = request.get_json()
+        username = params.get('username', None)
+        password = params.get('password', None)
 
-def identify(payload):
-    return userid_table.get(payload['identity'])
+        if not username:
+            return {'msg': 'Missing username parameter'}, 400
+        if not password:
+            return {'msg': 'Missing password parameter'}, 400
 
-
-jwt = JWT(app, authenticate, identify)
+        user = username_table.get(username)
+        if user and pbkdf2_sha256.verify(user.password, password):
+            return {'jwt': create_jwt(identity=username)}
+        else:
+            return {'msg': 'Bad username or password'}, 401
 
 
 class RecognizeFace(Resource):
-    @jwt_required()
+    @jwt_required
     def post(self):
         global model
         parse = reqparse.RequestParser()
@@ -55,13 +64,12 @@ class RecognizeFace(Resource):
         _image = args['image']
         image = load_image(_image, 160)
         return {
-            'image': _image.filename,
             'embeddings': model.predict(image)[0]
         }
 
 
 class FindFaces(Resource):
-    @jwt_required()
+    @jwt_required
     def post(self):
         global face_extractor
         parse = reqparse.RequestParser()
@@ -71,14 +79,13 @@ class FindFaces(Resource):
         image = imread(_image, mode='RGB')
         faces = face_extractor.find_faces(image)
         return {
-            'image': _image.filename,
             'found_faces': len(faces),
             'faces': [serialize_area(face_area) for face_area in faces]
         }
 
 
 class RecognizeFaces(Resource):
-    @jwt_required()
+    @jwt_required
     def post(self):
         global face_extractor
         parse = reqparse.RequestParser()
@@ -105,7 +112,7 @@ class RecognizeFaces(Resource):
 
 
 class CompareEmbeddings(Resource):
-    @jwt_required()
+    @jwt_required
     def post(self):
         face_embeddings = request.get_json()
         _distance = distance.euclidean(*face_embeddings)
@@ -115,7 +122,7 @@ class CompareEmbeddings(Resource):
 
 
 class CompareFaces(Resource):
-    @jwt_required()
+    @jwt_required
     def post(self):
         global face_extractor, model
         parse = reqparse.RequestParser()
@@ -174,7 +181,7 @@ class CompareFaces(Resource):
 
 
 class IdentifyFaces(Resource):
-    @jwt_required()
+    @jwt_required
     def post(self):
         parser = reqparse.RequestParser()
         parser.add_argument('image', type=FileStorage, location='files')
@@ -190,7 +197,6 @@ class IdentifyFaces(Resource):
             input_tensor = np.array([prewhiten(face[0]) for face in faces])
             faces_embeddings = model.predict(input_tensor)
             distances, identifiers = classifier.predict_on_batch(faces_embeddings)
-
             return {
                 'found_faces': len(faces),
                 'persons': [{
@@ -206,6 +212,7 @@ class IdentifyFaces(Resource):
             }
 
 
+api.add_resource(Auth, '/auth')
 api.add_resource(IdentifyFaces, '/identify-faces')
 api.add_resource(FindFaces, '/find-faces')
 api.add_resource(CompareEmbeddings, '/compare-embeddings')
