@@ -4,6 +4,7 @@ from collections import namedtuple
 from io import BytesIO
 from itertools import zip_longest
 from json import JSONDecodeError
+from os import listdir
 from uuid import uuid4
 
 import numpy as np
@@ -264,6 +265,19 @@ class AddPerson(Resource):
         }
 
 
+class PersonImages(Resource):
+    @jwt_required
+    def get(self, person_id):
+        person_folder = f'images/{person_id}'
+        if os.path.exists(person_folder):
+            return {
+                'images': [f'{person_folder}/{image}' for image in listdir(person_folder) if
+                           os.path.isfile(os.path.join(person_folder, image)) if 'original' not in image]
+            }
+        else:
+            return {'error': 'Person not found'}, 400
+
+
 @sockets.route('/ws')
 def recognition_socket(ws):
     mode = 'face-detection'
@@ -327,6 +341,7 @@ api.add_resource(CompareFaces, '/compare-faces')
 api.add_resource(RecognizeFace, '/recognize-face')
 api.add_resource(RecognizeFaces, '/recognize-faces')
 api.add_resource(AddPerson, '/add-person')
+api.add_resource(PersonImages, '/person-images/<string:person_id>')
 
 if __name__ == '__main__':
     app.config.from_pyfile('settings.py')
