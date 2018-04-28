@@ -41,6 +41,11 @@ username_table = {u.username: u for u in users}
 userid_table = {u.id: u for u in users}
 
 
+@app.route('/images/<path:path>')
+def images(path):
+    return send_from_directory('images', path)
+
+
 class Auth(Resource):
     def post(self):
         if not request.is_json:
