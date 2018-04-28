@@ -1,9 +1,13 @@
 import json
+import os
 from collections import namedtuple
+from io import BytesIO
 from itertools import zip_longest
+from json import JSONDecodeError
+from uuid import uuid4
 
 import numpy as np
-from flask import Flask, request
+from flask import Flask, request, send_from_directory
 from flask_jwt_simple import JWTManager, jwt_required, create_jwt
 from flask_restful import Resource, Api, reqparse
 from flask_sockets import Sockets
@@ -22,6 +26,7 @@ from utils import serialize_area
 app = Flask(__name__)
 api = Api(app)
 jwt = JWTManager(app)
+sockets = Sockets(app)
 
 model = None
 face_extractor = None
@@ -259,6 +264,61 @@ class AddPerson(Resource):
         }
 
 
+@sockets.route('/ws')
+def recognition_socket(ws):
+    mode = 'face-detection'
+    while not ws.closed:
+        data = ws.receive()
+        if not data:
+            continue
+        if isinstance(data, (bytes, bytearray)):
+            image = BytesIO(data)
+            faces = face_extractor.extract_faces(
+                imread(image, mode='RGB'),
+                image_size=160,
+                margin=0.1
+            )
+            if not len(faces):
+                ws.send(json.dumps({
+                    'found_faces': 0,
+                    'persons': []
+                }))
+                continue
+            if mode == 'face-detection':
+                ws.send(json.dumps({
+                    'found_faces': len(faces),
+                    'persons': [{
+                        'area': serialize_area(face_area),
+                    } for face_area in (face[1] for face in faces)],
+                }))
+            elif mode == 'face-recognition':
+                input_tensor = np.array([prewhiten(face[0]) for face in faces])
+                faces_embeddings = model.predict(input_tensor)
+                distances, identifiers = classifier.predict_on_batch(faces_embeddings)
+
+                ws.send(json.dumps({
+                    'found_faces': len(faces),
+                    'persons': [{
+                        'area': serialize_area(face_area),
+                        'id': uuid.decode('utf-8') if dist <= 0.6 else None,
+                        'distance': float(dist)
+                    } for face_area, dist, uuid in zip_longest((face[1] for face in faces), distances, identifiers)],
+                }))
+            else:
+                ws.send(json.dumps({
+                    'error': 'unexpected mode'
+                }))
+        else:
+            try:
+                data = json.loads(data)
+            except JSONDecodeError:
+                ws.send(json.dumps({
+                    'error': 'invalid JSON'
+                }))
+            else:
+                mode = data.get('mode')
+
+
 api.add_resource(Auth, '/auth')
 api.add_resource(IdentifyFaces, '/identify-faces')
 api.add_resource(FindFaces, '/find-faces')
@@ -278,8 +338,16 @@ if __name__ == '__main__':
     print('Loading Classifier model...')
     classifier_path = app.config.get('CLASSIFIER_PATH')
     if classifier_path:
-        classifier: KNeighborsClassifier = KNeighborsClassifier.from_file(classifier_path)
+        if os.path.exists(classifier_path):
+            classifier: KNeighborsClassifier = KNeighborsClassifier.from_file(classifier_path)
+        else:
+            classifier = KNeighborsClassifier()
     else:
         classifier = KNeighborsClassifier()
     print('Classifier model is loaded')
-    app.run(use_reloader=False, port=5001)
+    # app.run(use_reloader=False, port=5001)
+    from gevent import pywsgi
+    from geventwebsocket.handler import WebSocketHandler
+
+    server = pywsgi.WSGIServer(('127.0.0.1', 5001), app, handler_class=WebSocketHandler)
+    server.serve_forever()
