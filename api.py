@@ -1,5 +1,6 @@
 import json
 from collections import namedtuple
+from itertools import zip_longest
 
 import numpy as np
 from flask import Flask, request
@@ -103,7 +104,7 @@ class RecognizeFaces(Resource):
                 'faces': [{
                     'area': serialize_area(face_area),
                     'embeddings': prediction
-                } for face_area, prediction in zip((face[1] for face in faces), predictions)],
+                } for face_area, prediction in zip_longest((face[1] for face in faces), predictions)],
             }
         else:
             return {
@@ -202,9 +203,9 @@ class IdentifyFaces(Resource):
                 'found_faces': len(faces),
                 'persons': [{
                     'area': serialize_area(face_area),
-                    'id': uuid.decode('utf-8') if dist <= 0.6 else None,
-                    'distance': float(dist)
-                } for face_area, dist, uuid in zip((face[1] for face in faces), distances, identifiers)],
+                    'id': uuid.decode('utf-8') if uuid and dist is not None and dist <= 0.6 else None,
+                    'distance': float(dist) if dist is not None else None
+                } for face_area, dist, uuid in zip_longest((face[1] for face in faces), distances, identifiers)],
             }
         else:
             return {
