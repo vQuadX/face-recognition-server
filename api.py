@@ -305,6 +305,67 @@ class AddPerson(Resource):
         }
 
 
+class AddFace(Resource):
+    @jwt_required
+    def post(self, person_id):
+        person_uuid = person_id.encode()
+        if not classifier.uuid_in_classes(person_uuid):
+            return {
+                'status': 'error',
+                'error': 'Person ID not found',
+                'person_id': None
+            }
+
+        parser = reqparse.RequestParser()
+        parser.add_argument('image', type=FileStorage, location='files')
+        args = parser.parse_args()
+
+        image = args.get('image')
+        if not image:
+            return {
+                       'status': 'error',
+                       'error': 'Image is not specified'
+                   }, 400
+        image = imread(image, mode='RGB')
+        faces = face_extractor.extract_faces(
+            image,
+            image_size=160,
+            margin=0.1
+        )
+        if not len(faces):
+            return {
+                'status': 'error',
+                'error': 'Faces not found on image'
+            }
+        elif len(faces) > 1:
+            return {
+                'status': 'error',
+                'error': f'Found more than 1 face ({len(faces)})'
+            }
+
+        face_image = faces[0][0]
+        face_input_tensor = np.array([prewhiten(face_image)])
+        face_embeddings = model.predict(face_input_tensor)
+
+        class_id = classifier.partial_fit(face_embeddings, np.array([person_uuid]))[0]
+
+        person_images_dir = os.path.join(app.config.get('IMAGE_DIR'), person_id)
+        if not os.path.exists(person_images_dir):
+            os.makedirs(person_images_dir)
+
+        person_image = os.path.join(person_images_dir, f'{class_id}_original.jpg')
+        person_face_image = os.path.join(person_images_dir, f'{class_id}.jpg')
+        imsave(person_image, image)
+        imsave(person_face_image, face_image)
+
+        classifier.save(app.config['CLASSIFIER_PATH'])
+        return {
+            'status': 'success',
+            'person_id': person_id,
+            'error': ''
+        }
+
+
 class PersonImages(Resource):
     @jwt_required
     def get(self, person_id):
@@ -381,6 +442,7 @@ api.add_resource(ExtractEmbeddings, '/extract-embeddings')
 api.add_resource(VerifyEmbeddings, '/verify-embeddings')
 api.add_resource(RecognizeFaces, '/recognize-faces')
 api.add_resource(AddPerson, '/add-person')
+api.add_resource(AddFace, '/add-face/<string:person_id>')
 api.add_resource(PersonImages, '/person-images/<string:person_id>')
 
 if __name__ == '__main__':
