@@ -42,6 +42,7 @@ userid_table = {u.id: u for u in users}
 
 
 @app.route('/images/<path:path>')
+@jwt_required
 def images(path):
     return send_from_directory('images', path)
 
@@ -67,74 +68,42 @@ class Auth(Resource):
             return {'msg': 'Bad username or password'}, 401
 
 
-class RecognizeFace(Resource):
+class IdentifyFaces(Resource):
     @jwt_required
     def post(self):
-        global model
-        parse = reqparse.RequestParser()
-        parse.add_argument('image', type=FileStorage, location='files')
-        args = parse.parse_args()
-        _image = args['image']
-        image = load_image(_image, 160)
-        return {
-            'embeddings': model.predict(image)[0]
-        }
+        parser = reqparse.RequestParser()
+        parser.add_argument('image', type=FileStorage, location='files')
+        args = parser.parse_args()
 
-
-class FindFaces(Resource):
-    @jwt_required
-    def post(self):
-        global face_extractor
-        parse = reqparse.RequestParser()
-        parse.add_argument('image', type=FileStorage, location='files')
-        args = parse.parse_args()
-        _image = args['image']
-        image = imread(_image, mode='RGB')
-        faces = face_extractor.find_faces(image)
-        return {
-            'found_faces': len(faces),
-            'faces': [serialize_area(face_area) for face_area in faces]
-        }
-
-
-class RecognizeFaces(Resource):
-    @jwt_required
-    def post(self):
-        global face_extractor
-        parse = reqparse.RequestParser()
-        parse.add_argument('image', type=FileStorage, location='files')
-        args = parse.parse_args()
-        _image = args['image']
-        image = imread(_image, mode='RGB')
-        faces = face_extractor.extract_faces(image, image_size=160, margin=0.1)
+        image = args['image']
+        if not image:
+            return {'error': 'Image is not specified'}, 400
+        faces = face_extractor.extract_faces(
+            imread(image, mode='RGB'),
+            image_size=160,
+            margin=0.1
+        )
         if len(faces):
             input_tensor = np.array([prewhiten(face[0]) for face in faces])
-            predictions = model.predict(input_tensor)
+            faces_embeddings = model.predict(input_tensor)
+            distances, identifiers = classifier.predict_on_batch(faces_embeddings)
             return {
                 'found_faces': len(faces),
-                'faces': [{
+                'persons': [{
                     'area': serialize_area(face_area),
-                    'embeddings': prediction
-                } for face_area, prediction in zip_longest((face[1] for face in faces), predictions)],
+                    'id': uuid.decode('utf-8') if uuid and dist is not None and dist <= app.config[
+                        'FACE_RECOGNITION_THRESHOLD'] else None,
+                    'distance': float(dist) if dist is not None else None
+                } for face_area, dist, uuid in zip_longest((face[1] for face in faces), distances, identifiers)],
             }
         else:
             return {
                 'found_faces': 0,
-                'faces': []
+                'persons': []
             }
 
 
-class CompareEmbeddings(Resource):
-    @jwt_required
-    def post(self):
-        face_embeddings = request.get_json()
-        _distance = distance.euclidean(*face_embeddings)
-        return {
-            'distance': _distance,
-        }
-
-
-class CompareFaces(Resource):
+class VerifyFaces(Resource):
     @jwt_required
     def post(self):
         global face_extractor, model
@@ -143,13 +112,19 @@ class CompareFaces(Resource):
         parse.add_argument('image2', type=FileStorage, location='files')
         args = parse.parse_args()
         image1, image2 = args['image1'], args['image2']
+        if not image1:
+            return {'error': 'Image1 is not specified'}, 400
+        if not image2:
+            return {'error': 'Image2 is not specified'}, 400
         image1_faces = face_extractor.extract_faces(
             imread(image1, mode='RGB'),
-            image_size=160
+            image_size=160,
+            margin=0.1
         )
         image2_faces = face_extractor.extract_faces(
             imread(image2, mode='RGB'),
-            image_size=160
+            image_size=160,
+            margin=0.1
         )
 
         result = {
@@ -162,8 +137,10 @@ class CompareFaces(Resource):
                 },
                 {
                     'found_faces': len(image2_faces),
-                    'faces': [serialize_area(face_area) for face_area in (face[1] for face in image2_faces)]
-                }
+                    'faces': [{
+                        'area': serialize_area(face_area)
+                    } for face_area in (face[1] for face in image2_faces)]
+                },
             ]
         }
 
@@ -189,39 +166,86 @@ class CompareFaces(Resource):
 
         return {
             'distance': _distance,
+            'is_same_person': _distance <= app.config['FACE_RECOGNITION_THRESHOLD'],
             **result
         }
 
 
-class IdentifyFaces(Resource):
+class FindFaces(Resource):
     @jwt_required
     def post(self):
-        parser = reqparse.RequestParser()
-        parser.add_argument('image', type=FileStorage, location='files')
-        args = parser.parse_args()
+        global face_extractor
+        parse = reqparse.RequestParser()
+        parse.add_argument('image', type=FileStorage, location='files')
+        args = parse.parse_args()
+        _image = args['image']
+        if not _image:
+            return {
+                       'error': 'Image is not specified'
+                   }, 400
+        image = imread(_image, mode='RGB')
+        faces = face_extractor.find_faces(image)
+        return {
+            'found_faces': len(faces),
+            'faces': [serialize_area(face_area) for face_area in faces]
+        }
 
-        face_image = args['image']
-        faces = face_extractor.extract_faces(
-            imread(face_image, mode='RGB'),
-            image_size=160,
-            margin=0.1
-        )
+
+class ExtractEmbeddings(Resource):
+    @jwt_required
+    def post(self):
+        global model
+        parse = reqparse.RequestParser()
+        parse.add_argument('image', type=FileStorage, location='files')
+        args = parse.parse_args()
+        _image = args['image']
+        if not _image:
+            return {
+                       'error': 'Image is not specified'
+                   }, 400
+        image = load_image(_image, 160)
+        return {
+            'embeddings': model.predict(image)[0]
+        }
+
+
+class VerifyEmbeddings(Resource):
+    @jwt_required
+    def post(self):
+        face_embeddings = request.get_json()
+        _distance = distance.euclidean(*face_embeddings)
+        return {
+            'distance': _distance,
+            'is_same_person': _distance <= app.config['FACE_RECOGNITION_THRESHOLD'],
+        }
+
+
+class RecognizeFaces(Resource):
+    @jwt_required
+    def post(self):
+        global face_extractor
+        parse = reqparse.RequestParser()
+        parse.add_argument('image', type=FileStorage, location='files')
+        args = parse.parse_args()
+        _image = args['image']
+        if not _image:
+            return {'error': 'Image is not specified'}, 400
+        image = imread(_image, mode='RGB')
+        faces = face_extractor.extract_faces(image, image_size=160, margin=0.1)
         if len(faces):
             input_tensor = np.array([prewhiten(face[0]) for face in faces])
-            faces_embeddings = model.predict(input_tensor)
-            distances, identifiers = classifier.predict_on_batch(faces_embeddings)
+            predictions = model.predict(input_tensor)
             return {
                 'found_faces': len(faces),
-                'persons': [{
+                'faces': [{
                     'area': serialize_area(face_area),
-                    'id': uuid.decode('utf-8') if uuid and dist is not None and dist <= 0.6 else None,
-                    'distance': float(dist) if dist is not None else None
-                } for face_area, dist, uuid in zip_longest((face[1] for face in faces), distances, identifiers)],
+                    'embeddings': prediction
+                } for face_area, prediction in zip_longest((face[1] for face in faces), predictions)],
             }
         else:
             return {
                 'found_faces': 0,
-                'persons': []
+                'faces': []
             }
 
 
@@ -233,6 +257,11 @@ class AddPerson(Resource):
         args = parser.parse_args()
 
         image = args.get('image')
+        if not image:
+            return {
+                       'status': 'error',
+                       'error': 'Image is not specified'
+                   }, 400
         image = imread(image, mode='RGB')
         faces = face_extractor.extract_faces(
             image,
@@ -241,11 +270,15 @@ class AddPerson(Resource):
         )
         if not len(faces):
             return {
-                'error': 'Faces not found on image'
+                'status': 'error',
+                'error': 'Faces not found on image',
+                'person_id': None
             }
         elif len(faces) > 1:
             return {
-                'error': f'Found more than 1 face ({len(faces)})'
+                'status': 'error',
+                'error': f'Found more than 1 face ({len(faces)})',
+                'person_id': None
             }
 
         face_image = faces[0][0]
@@ -253,20 +286,22 @@ class AddPerson(Resource):
         face_embeddings = model.predict(face_input_tensor)
 
         person_id = str(uuid4())
-        class_id = classifier.partial_fit(face_embeddings, np.array([person_id]))[0]
+        class_count = classifier.partial_fit(face_embeddings, np.array([person_id.encode()]))[0]
 
         person_images_dir = os.path.join(app.config.get('IMAGE_DIR'), person_id)
         if not os.path.exists(person_images_dir):
             os.makedirs(person_images_dir)
 
-        person_image = os.path.join(person_images_dir, f'{class_id}_original.jpg')
-        person_face_image = os.path.join(person_images_dir, f'{class_id}.jpg')
+        person_image = os.path.join(person_images_dir, f'{class_count}_original.jpg')
+        person_face_image = os.path.join(person_images_dir, f'{class_count}.jpg')
         imsave(person_image, image)
         imsave(person_face_image, face_image)
 
-        classifier.save('models/knn_classifier.pkl')
+        classifier.save(app.config['CLASSIFIER_PATH'])
         return {
-            'person_id': person_id
+            'status': 'success',
+            'person_id': person_id,
+            'error': ''
         }
 
 
@@ -280,7 +315,7 @@ class PersonImages(Resource):
                            os.path.isfile(os.path.join(person_folder, image)) if 'original' not in image]
             }
         else:
-            return {'error': 'Person not found'}, 400
+            return {'error': f'Person with id "{person_id}" not found'}, 400
 
 
 @sockets.route('/ws')
@@ -319,7 +354,7 @@ def recognition_socket(ws):
                     'found_faces': len(faces),
                     'persons': [{
                         'area': serialize_area(face_area),
-                        'id': uuid.decode('utf-8') if dist <= 0.6 else None,
+                        'id': uuid.decode('utf-8') if dist <= app.config['FACE_RECOGNITION_THRESHOLD'] else None,
                         'distance': float(dist)
                     } for face_area, dist, uuid in zip_longest((face[1] for face in faces), distances, identifiers)],
                 }))
@@ -340,10 +375,10 @@ def recognition_socket(ws):
 
 api.add_resource(Auth, '/auth')
 api.add_resource(IdentifyFaces, '/identify-faces')
+api.add_resource(VerifyFaces, '/verify-faces')
 api.add_resource(FindFaces, '/find-faces')
-api.add_resource(CompareEmbeddings, '/compare-embeddings')
-api.add_resource(CompareFaces, '/compare-faces')
-api.add_resource(RecognizeFace, '/recognize-face')
+api.add_resource(ExtractEmbeddings, '/extract-embeddings')
+api.add_resource(VerifyEmbeddings, '/verify-embeddings')
 api.add_resource(RecognizeFaces, '/recognize-faces')
 api.add_resource(AddPerson, '/add-person')
 api.add_resource(PersonImages, '/person-images/<string:person_id>')
