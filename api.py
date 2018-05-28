@@ -411,12 +411,13 @@ def recognition_socket(ws):
                 faces_embeddings = model.predict(input_tensor)
                 distances, identifiers = classifier.predict_on_batch(faces_embeddings)
 
+                threshold = app.config['FACE_RECOGNITION_THRESHOLD']
                 ws.send(json.dumps({
                     'found_faces': len(faces),
                     'persons': [{
                         'area': serialize_area(face_area),
-                        'id': uuid.decode('utf-8') if dist <= app.config['FACE_RECOGNITION_THRESHOLD'] else None,
-                        'distance': float(dist)
+                        'id': uuid.decode('utf-8') if dist is not None and dist <= threshold else None,
+                        'distance': float(dist) if dist is not None else None
                     } for face_area, dist, uuid in zip_longest((face[1] for face in faces), distances, identifiers)],
                 }))
             else:
