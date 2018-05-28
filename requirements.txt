@@ -1,0 +1,14 @@
+Keras
+tensorflow
+opencv-python
+numpy
+scipy
+imageio
+flask
+flask-RESTful
+flask-JWT-Simple
+flask-Sockets
+gevent
+gevent-websocket
+passlib
+joblib
