@@ -13,15 +13,21 @@ class KNeighborsClassifier:
         self._X: np.ndarray = None
         self._y: np.ndarray = None
 
+        self.fitted = False
+
     @classmethod
-    def from_file(cls, file_name):
-        return joblib.load(file_name)
+    def from_file(cls, file_path):
+        return joblib.load(file_path)
 
     def partial_fit(self, X, y):
         _y = np.empty(y.shape, dtype=np.int)
+        _y_counts = np.empty(y.shape, dtype=np.int)
         for i, cls in enumerate(y):
-            class_id = self.classes.setdefault(cls, self._last_class_id)
+            class_info = self.classes.setdefault(cls, np.array([self._last_class_id, 0], dtype='int64'))
+            class_info[1] += 1
+            class_id, class_count = class_info
             _y[i] = class_id
+            _y_counts[i] = class_count
             if class_id == self._last_class_id:
                 if self.__uuid_classes is None:
                     self.__uuid_classes = np.array([cls], dtype='S36')
@@ -36,6 +42,9 @@ class KNeighborsClassifier:
             self._X = np.array(X)
         else:
             self._X = self._extend(self._X, X)
+        self.fitted = True
+
+        return _y_counts
 
     def __calc_distances(self, X):
         distances = np.empty(self._y.shape, dtype=np.float)
@@ -46,9 +55,15 @@ class KNeighborsClassifier:
         return distances
 
     def predict(self, X):
+        if not self.fitted:
+            return np.array([]), np.array([])
+
         return self._predict(X)
 
     def predict_on_batch(self, X):
+        if not self.fitted:
+            return np.array([]), np.array([])
+
         distances = np.empty(X.shape[0], dtype=np.float32)
         uuidx = np.empty(X.shape[0], dtype='S36')
 
@@ -92,6 +107,9 @@ class KNeighborsClassifier:
 
     def save(self, file_name='knn_classifier.pkl'):
         joblib.dump(self, file_name)
+
+    def uuid_in_classes(self, uuid):
+        return uuid in self.__uuid_classes
 
     @staticmethod
     def _extend(arr, values):
